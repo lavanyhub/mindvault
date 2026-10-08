@@ -1,15 +1,28 @@
- import React, { useState, useCallback } from 'react';
+ import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { Upload, FileText, CheckCircle, AlertCircle, X } from 'lucide-react';
-import { uploadDocument } from '../api';
+import { uploadDocument, streamJobStatus, getDocument } from '../api';
+
+const STAGE_LABELS = {
+  queued: 'Queued...',
+  processing: 'Processing...',
+  embedding: 'Embedding chunks...',
+  summarizing: 'Generating summary, tags, action items...',
+  saving: 'Saving results...',
+  complete: 'Done',
+};
 
 export default function UploadPage({ onNavigate }) {
   const [file, setFile] = useState(null);
   const [title, setTitle] = useState('');
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [stage, setStage] = useState(null);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
+  const closeStreamRef = useRef(null);
+
+  useEffect(() => () => closeStreamRef.current?.(), []);
 
   const onDrop = useCallback((accepted) => {
     if (accepted[0]) {
@@ -30,6 +43,7 @@ export default function UploadPage({ onNavigate }) {
     if (!file) return;
     setUploading(true);
     setProgress(0);
+    setStage('uploading');
     setError(null);
 
     const formData = new FormData();
@@ -37,13 +51,41 @@ export default function UploadPage({ onNavigate }) {
     formData.append('title', title || file.name);
 
     try {
-      const res = await uploadDocument(formData, setProgress);
-      setResult(res.data);
-      setFile(null);
-      setTitle('');
+      // UPGRADE (Phase 1.6): upload returns as soon as the file is saved
+      // and chunked (job_id, no summary/tags yet) — then we subscribe to
+      // /jobs/:id/stream for live per-stage progress instead of blocking.
+      const res = await uploadDocument(formData, (pct) => {
+        setProgress(Math.min(pct, 100));
+      });
+      const { job_id, doc_id } = res.data;
+      setStage('processing');
+      setProgress(100);
+
+      closeStreamRef.current = streamJobStatus(job_id, {
+        onUpdate: (job) => setStage(job.stage || job.status),
+        onComplete: async (job) => {
+          if (job.status === 'error') {
+            setError(job.error || 'Processing failed.');
+            setUploading(false);
+            return;
+          }
+          try {
+            const doc = await getDocument(doc_id);
+            setResult(doc.data);
+          } catch {
+            setResult({ title, word_count: res.data.word_count, chunk_count: res.data.chunk_count });
+          }
+          setFile(null);
+          setTitle('');
+          setUploading(false);
+        },
+        onError: () => {
+          setError('Lost connection while processing. Check the Documents page — it may still finish.');
+          setUploading(false);
+        },
+      });
     } catch (err) {
       setError(err.response?.data?.error || 'Upload failed. Please try again.');
-    } finally {
       setUploading(false);
     }
   };
@@ -109,7 +151,7 @@ export default function UploadPage({ onNavigate }) {
         <div style={{ marginBottom: '16px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
             <span style={{ fontSize: '13px', color: '#94a3b8' }}>
-              {progress < 100 ? 'Uploading...' : '🤖 AI is processing your document...'}
+              {progress < 100 ? 'Uploading...' : `🤖 ${STAGE_LABELS[stage] || 'Processing...'}`}
             </span>
             <span style={{ fontSize: '13px', color: '#6366f1' }}>{progress}%</span>
           </div>
@@ -122,7 +164,10 @@ export default function UploadPage({ onNavigate }) {
           </div>
           {progress === 100 && (
             <p style={{ fontSize: '12px', color: '#64748b', marginTop: '8px' }}>
-              Generating summary, extracting tags, action items... this may take 1-2 minutes.
+              {/* UPGRADE: this used to be a static guess ("1-2 minutes") shown
+                  the whole time. Now it reflects the real stage from the SSE
+                  job stream. */}
+              Live status — no need to keep this tab frozen while it runs.
             </p>
           )}
         </div>
@@ -160,7 +205,12 @@ export default function UploadPage({ onNavigate }) {
           )}
           {result.tags?.length > 0 && (
             <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-              {result.tags.map(t => <span key={t} className="tag">{t}</span>)}
+              {/* FIX: result now comes from GET /documents/:id (Phase 1.6),
+                  whose tags are {id, name, color} objects, not bare strings
+                  like the old synchronous upload response used to return. */}
+              {result.tags.map(t => (
+                <span key={t.id ?? t.name} className="tag">{t.name ?? t}</span>
+              ))}
             </div>
           )}
           <button className="btn-primary" onClick={() => onNavigate('query')} style={{ marginTop: '16px' }}>

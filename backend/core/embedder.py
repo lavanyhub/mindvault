@@ -40,12 +40,19 @@ class VectorStore:
 
     def search(self, query: str, top_k: int = None) -> list[dict]:
         """Semantic search over all stored chunks."""
+        # FIX (Phase 2.5): an empty collection made count()==0, and
+        # `or 1` turned that into n_results=1 — so Chroma was queried for
+        # 1 result over zero vectors instead of being skipped, which some
+        # Chroma versions raise on. Explicit early return instead.
+        if self.collection.count() == 0:
+            return []
+
         top_k = top_k or Config.TOP_K_RESULTS
         query_embedding = self.embedder.embed_query(query)
 
         results = self.collection.query(
             query_embeddings=[query_embedding],
-            n_results=min(top_k, self.collection.count() or 1),
+            n_results=min(top_k, self.collection.count()),
             include=["documents", "metadatas", "distances"]
         )
 

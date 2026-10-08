@@ -11,3 +11,9 @@ frontend/build/
 *.egg-info/
 dist/
 .DS_Store
+
+venv/
+data/
+node_modules/
+.env
+docs/passport.jpg

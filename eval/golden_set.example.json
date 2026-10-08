@@ -1,0 +1,23 @@
+[
+  {
+    "id": "q001",
+    "question": "What retrieval strategy does MindVault use?",
+    "relevant_chunk_ids": ["doc_3_chunk_7", "doc_3_chunk_8"],
+    "expected_answer_contains": ["hybrid", "RRF", "cross-encoder"],
+    "category": "factual"
+  },
+  {
+    "id": "q002",
+    "question": "Does MindVault support multi-user accounts?",
+    "relevant_chunk_ids": [],
+    "expected_answer_contains": ["don't have information", "no information"],
+    "category": "negative"
+  },
+  {
+    "id": "q003",
+    "question": "How does the reranking stage relate to the fusion stage in retrieval?",
+    "relevant_chunk_ids": ["doc_3_chunk_8", "doc_3_chunk_9"],
+    "expected_answer_contains": ["rerank", "fusion", "top"],
+    "category": "multi-hop"
+  }
+]

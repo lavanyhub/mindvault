@@ -1,41 +1,76 @@
  import React, { useState, useRef, useEffect } from 'react';
 import { Send, Brain, FileText, Loader } from 'lucide-react';
-import { queryKnowledge } from '../api';
+import { streamQuery } from '../api';
 
 export default function QueryPage() {
   const [question, setQuestion] = useState('');
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [streaming, setStreaming] = useState(false);
   const bottomRef = useRef(null);
+  const closeStreamRef = useRef(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  const handleQuery = async () => {
+  useEffect(() => () => closeStreamRef.current?.(), []);
+
+  // UPGRADE (Phase 1.6): non-streaming queryKnowledge() waited for the full
+  // answer before rendering anything. Now sources arrive first (retrieval
+  // already finished), then tokens are appended live as Ollama generates
+  // them, matching what /api/query/stream (Phase 1.5) actually sends.
+  const handleQuery = () => {
     if (!question.trim() || loading) return;
     const q = question.trim();
     setQuestion('');
     setMessages(prev => [...prev, { type: 'user', content: q }]);
     setLoading(true);
+    setStreaming(false);
 
-    try {
-      const res = await queryKnowledge(q);
-      setMessages(prev => [...prev, {
-        type: 'assistant',
-        content: res.data.answer,
-        sources: res.data.sources,
-        context: res.data.context_used
-      }]);
-    } catch {
-      setMessages(prev => [...prev, {
-        type: 'assistant',
-        content: 'Sorry, something went wrong. Make sure Ollama is running.',
-        sources: []
-      }]);
-    } finally {
-      setLoading(false);
-    }
+    let assistantIndex = -1;
+
+    closeStreamRef.current = streamQuery(q, {
+      onSources: ({ sources }) => {
+        setLoading(false);
+        setStreaming(true);
+        setMessages(prev => {
+          assistantIndex = prev.length;
+          return [...prev, { type: 'assistant', content: '', sources: sources || [] }];
+        });
+      },
+      onToken: (token) => {
+        setMessages(prev => {
+          if (assistantIndex === -1) return prev;
+          const next = [...prev];
+          next[assistantIndex] = { ...next[assistantIndex], content: next[assistantIndex].content + token };
+          return next;
+        });
+      },
+      onDone: () => {
+        setStreaming(false);
+      },
+      onError: () => {
+        setLoading(false);
+        setStreaming(false);
+        setMessages(prev => {
+          if (assistantIndex !== -1 && prev[assistantIndex]?.content === '') {
+            const next = [...prev];
+            next[assistantIndex] = {
+              type: 'assistant',
+              content: 'Sorry, something went wrong. Make sure Ollama is running.',
+              sources: [],
+            };
+            return next;
+          }
+          return [...prev, {
+            type: 'assistant',
+            content: 'Sorry, something went wrong. Make sure Ollama is running.',
+            sources: [],
+          }];
+        });
+      },
+    });
   };
 
   return (
@@ -133,8 +168,8 @@ export default function QueryPage() {
           placeholder="Ask anything about your documents..."
           style={{ flex: 1 }}
         />
-        <button className="btn-primary" onClick={handleQuery} disabled={loading || !question.trim()}
-          style={{ padding: '10px 16px', opacity: loading || !question.trim() ? 0.5 : 1 }}>
+        <button className="btn-primary" onClick={handleQuery} disabled={loading || streaming || !question.trim()}
+          style={{ padding: '10px 16px', opacity: loading || streaming || !question.trim() ? 0.5 : 1 }}>
           <Send size={18} />
         </button>
       </div>
