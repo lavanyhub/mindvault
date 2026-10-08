@@ -19,24 +19,21 @@ class VectorStore:
             base_url=Config.OLLAMA_BASE_URL
         )
 
-    def add_chunks(self, doc_id: int, chunks: list[str], title: str):
-        """Embed and store chunks in ChromaDB."""
+      def add_chunks(self, doc_id: int, chunks: list[str], title: str, batch_size: int = 32):
+        """Embed and store chunks in ChromaDB (idempotent, batched)."""
         if not chunks:
             return
-
-        embeddings = self.embedder.embed_documents(chunks)
-
-        ids = [f"doc_{doc_id}_chunk_{i}" for i in range(len(chunks))]
-        metadatas = [{"doc_id": doc_id, "title": title, "chunk_index": i}
-                     for i in range(len(chunks))]
-
-        self.collection.add(
-            ids=ids,
-            embeddings=embeddings,
-            documents=chunks,
-            metadatas=metadatas
-        )
-        print(f"✅ Added {len(chunks)} chunks for doc_id={doc_id}")
+        for start in range(0, len(chunks), batch_size):
+            batch = chunks[start:start + batch_size]
+            embeddings = self.embedder.embed_documents(batch)
+            self.collection.upsert(
+                ids=[f"doc_{doc_id}_chunk_{start + i}" for i in range(len(batch))],
+                embeddings=embeddings,
+                documents=batch,
+                metadatas=[{"doc_id": doc_id, "title": title, "chunk_index": start + i}
+                           for i in range(len(batch))]
+            )
+        print(f"Added {len(chunks)} chunks for doc_id={doc_id}")
 
     def search(self, query: str, top_k: int = None) -> list[dict]:
         """Semantic search over all stored chunks."""
