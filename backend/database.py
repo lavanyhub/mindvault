@@ -1,15 +1,14 @@
 import sqlite3
 import os
-from datetime import datetime
 from config import Config
 
 def get_connection():
     os.makedirs(os.path.dirname(Config.DB_PATH), exist_ok=True)
     conn = sqlite3.connect(Config.DB_PATH)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")   # makes CASCADE actually work
+    conn.execute("PRAGMA foreign_keys = ON")
     return conn
-    
+
 def init_db():
     conn = get_connection()
     cursor = conn.cursor()
@@ -19,6 +18,7 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             title TEXT NOT NULL,
             filename TEXT,
+            stored_filename TEXT,
             file_type TEXT,
             content TEXT,
             summary TEXT,
@@ -73,14 +73,10 @@ def init_db():
         );
     ''')
 
-    conn.commit()
-    conn.close()
-    print("✅ Database initialized successfully")
-
-if __name__ == "__main__":
-    init_db()
-        # --- migration: safe to run on your existing DB ---
+    # --- migration: safe to run on an existing DB ---
     cols = {row["name"] for row in cursor.execute("PRAGMA table_info(documents)")}
+    if "stored_filename" not in cols:
+        cursor.execute("ALTER TABLE documents ADD COLUMN stored_filename TEXT")
     if "content_hash" not in cols:
         cursor.execute("ALTER TABLE documents ADD COLUMN content_hash TEXT")
     if "status" not in cols:
@@ -88,3 +84,10 @@ if __name__ == "__main__":
     cursor.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_documents_hash ON documents(content_hash)"
     )
+
+    conn.commit()
+    conn.close()
+    print("Database initialized successfully")
+
+if __name__ == "__main__":
+    init_db()
