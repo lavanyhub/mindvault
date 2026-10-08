@@ -7,8 +7,9 @@ def get_connection():
     os.makedirs(os.path.dirname(Config.DB_PATH), exist_ok=True)
     conn = sqlite3.connect(Config.DB_PATH)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")   # makes CASCADE actually work
     return conn
-
+    
 def init_db():
     conn = get_connection()
     cursor = conn.cursor()
@@ -78,3 +79,12 @@ def init_db():
 
 if __name__ == "__main__":
     init_db()
+        # --- migration: safe to run on your existing DB ---
+    cols = {row["name"] for row in cursor.execute("PRAGMA table_info(documents)")}
+    if "content_hash" not in cols:
+        cursor.execute("ALTER TABLE documents ADD COLUMN content_hash TEXT")
+    if "status" not in cols:
+        cursor.execute("ALTER TABLE documents ADD COLUMN status TEXT DEFAULT 'processed'")
+    cursor.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_documents_hash ON documents(content_hash)"
+    )
